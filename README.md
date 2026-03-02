@@ -97,6 +97,17 @@ curl http://127.0.0.1:8888/health
 | `CACHE_ENABLED` | `1` | 启用 prompt caching 注入 |
 | `CACHE_TTL` | `1h` | Cache TTL（`5m` 或 `1h`） |
 
+## Claude Code 配置
+
+参考 [`settings.json`](settings.json) 配置 Claude Code（`~/.claude/settings.json`），包含：
+
+- Bedrock 模式启用 + proxy 指向
+- 模型配置（主模型、各级别默认模型、`[1m]` context window）
+- 性能调优选项
+- SessionStart hook 自动启动 proxy
+
+认证支持两种方式：**SigV4**（推荐，使用 `~/.aws/credentials` 或 Instance Profile）或 **Bearer Token**。
+
 ## 依赖
 
 - Python 3.9+

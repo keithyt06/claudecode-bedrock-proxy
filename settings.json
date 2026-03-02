@@ -1,0 +1,65 @@
+// Claude Code 推荐配置（~/.claude/settings.json）
+// 配合 claudecode-bedrock-proxy 使用
+{
+  "env": {
+    // ============================================
+    // 必需：启用 Bedrock 并指向 proxy
+    // ============================================
+    "CLAUDE_CODE_USE_BEDROCK": "1",
+    "ANTHROPIC_BEDROCK_BASE_URL": "http://127.0.0.1:8888",
+    "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",       // proxy 处理认证，CC 无需签名
+    "AWS_REGION": "ap-northeast-1",              // 你的 Bedrock 区域
+
+    // ============================================
+    // 模型配置
+    // ============================================
+
+    // 主模型（主对话使用的模型）
+    // [1m] 后缀启用 1M context window
+    "ANTHROPIC_MODEL": "global.anthropic.claude-opus-4-6-v1[1m]",
+
+    // 各级别默认模型（Agent tool 的 model: "opus"/"sonnet"/"haiku" 对应的实际模型）
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "global.anthropic.claude-opus-4-6-v1[1m]",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "global.anthropic.claude-sonnet-4-6-v1[1m]",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+
+    // 轻量任务（status line 等）使用的模型
+    "ANTHROPIC_SMALL_FAST_MODEL": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+
+    // ============================================
+    // 可选：性能调优
+    // ============================================
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",   // 最大输出 token
+    "CLAUDE_CODE_EFFORT_LEVEL": "high"           // proxy 会在请求层面升级到 max
+  },
+
+  // ============================================
+  // Hook：每次启动 Claude Code 自动启动 proxy
+  // ============================================
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/path/to/claudecode-bedrock-proxy/start.sh",
+            "timeout": 10,
+            "statusMessage": "Starting effort-max proxy..."
+          }
+        ]
+      }
+    ]
+  }
+}
+
+// ============================================
+// 认证方式（二选一）
+// ============================================
+//
+// 方式一：SigV4（推荐）
+//   Proxy 使用 ~/.aws/credentials 或 EC2 Instance Profile 自动签名，
+//   无需额外配置。
+//
+// 方式二：Bearer Token
+//   设置 proxy 环境变量 BEDROCK_BEARER_TOKEN，proxy 将使用 Bearer 认证转发。
