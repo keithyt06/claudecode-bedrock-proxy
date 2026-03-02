@@ -19,17 +19,27 @@
 [#14] cache: read=61149   write=246   ← cache hit
 ```
 
-### 2. Agent SDK 完全缺失 Prompt Caching（Subagent）
+### 2. Agent SDK 完全缺失 Prompt Caching（Agent tool Subagent）
 
-**问题：** Claude Code 通过 Agent tool 生成的子 agent 使用 `agent-sdk`，该 SDK（截至 v0.1.76）**完全不注入** `cache_control` breakpoints。所有 subagent 请求的 tools 和 system prompt 每次都作为 uncached input 计费。
+**问题：** Claude Code 有两种多 agent 机制，prompt caching 支持不同：
+
+| 机制 | 进程模型 | User-Agent | 自带 Prompt Caching |
+|------|----------|------------|---------------------|
+| **Agent tool** | 主进程内通过 `agent-sdk` 调用子进程 | `agent-sdk/0.1.76` | 无 |
+| **Agent Teams**（tmux 模式） | 独立终端窗口，各自运行完整 `claude` CLI | `cli` | 有（同主 CLI） |
+
+Agent tool 的 `agent-sdk`（截至 v0.1.76）**完全不注入** `cache_control` breakpoints，所有 subagent 请求的 tools 和 system prompt 每次都作为 uncached input 计费。Agent Teams 的 teammates 因为是独立 CLI 进程，自带 breakpoints，仅需 TTL 升级（见问题 1）。
 
 **Proxy 行为：** 对无 breakpoints 的请求（`pre=0`），自动在 tools、system prompt、最后一条 assistant message 上注入 `cache_control`（最多 4 个断点，遵守 API 限制）。
 
 **实际效果：**
 ```
-# Subagent 请求，proxy 注入后：
+# Agent tool subagent (agent-sdk)，proxy 注入后：
 [#1]  cache: 2bp(tools+system,1h,pre=0)  → cr=7013  cw=0     ← 命中缓存
 [#13] cache: 2bp(tools+system,1h,pre=0)  → cr=7013  cw=0     ← 持续命中
+
+# Agent Teams teammate (cli)，仅 TTL 升级：
+[#5]  cache: ttl-upgrade(4->1h,existing=4) → cr=60726 cw=95  ← 自带 caching
 ```
 
 ### 3. Thinking 配置未针对最新模型优化
