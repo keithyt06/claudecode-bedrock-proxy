@@ -84,6 +84,33 @@ Claude Code CLI
   AWS Bedrock (bedrock-runtime / bedrock)
 ```
 
+## 安装
+
+### 下载预编译二进制（推荐）
+
+从 [Releases](https://github.com/KevinZhao/claudecode-bedrock-proxy/releases) 下载对应平台的二进制文件，无需安装 Go 环境：
+
+```bash
+# Linux x86_64
+curl -Lo bedrock-effort-proxy https://github.com/KevinZhao/claudecode-bedrock-proxy/releases/latest/download/bedrock-effort-proxy-linux-amd64
+chmod +x bedrock-effort-proxy
+
+# Linux ARM64
+curl -Lo bedrock-effort-proxy https://github.com/KevinZhao/claudecode-bedrock-proxy/releases/latest/download/bedrock-effort-proxy-linux-arm64
+
+# macOS Apple Silicon
+curl -Lo bedrock-effort-proxy https://github.com/KevinZhao/claudecode-bedrock-proxy/releases/latest/download/bedrock-effort-proxy-darwin-arm64
+
+# macOS Intel
+curl -Lo bedrock-effort-proxy https://github.com/KevinZhao/claudecode-bedrock-proxy/releases/latest/download/bedrock-effort-proxy-darwin-amd64
+```
+
+### 从源码构建
+
+```bash
+go build -o bedrock-effort-proxy .
+```
+
 ## 使用
 
 ```bash
@@ -96,6 +123,17 @@ Claude Code CLI
 # 健康检查
 curl http://127.0.0.1:8888/health
 ```
+
+### 适用场景
+
+本 proxy 是一个通用的 Bedrock Claude API 反向代理，不仅限于 Claude Code，**任何使用 Anthropic Messages API 格式的应用**都可以通过它访问 Bedrock，并自动获得以下增强：
+
+- **HTTP/2 上游连接** — Go 实现原生支持 HTTP/2 与 Bedrock 通信，相比 HTTP/1.1 显著降低延迟：多路复用消除队头阻塞，头部压缩减少每次请求开销，单连接复用避免重复 TLS 握手。对于 streaming 响应（SSE），HTTP/2 的帧级流控提供更稳定的数据传输。
+- **自动 Prompt Caching 注入** — 对未携带 `cache_control` 的请求自动注入缓存断点，降低重复 input token 费用
+- **Thinking/Effort 优化** — 自动为新模型启用 adaptive thinking + max effort
+- **模型 ID 映射** — 透明转换 Anthropic 格式 model ID 为 Bedrock 跨区域推理 profile ID
+
+适用示例：Cursor、Continue、Cline、自定义 AI 应用等任何支持配置 API base URL 的工具。
 
 ## 环境变量
 
@@ -120,7 +158,7 @@ curl http://127.0.0.1:8888/health
 
 ## 依赖
 
-- Go 1.21+（默认，推荐）
+- Go 1.21+（仅从源码构建时需要，下载预编译二进制无需任何依赖）
 
 ### Python 版本（deprecated）
 
