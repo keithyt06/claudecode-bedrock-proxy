@@ -1,54 +1,64 @@
 # Bedrock Effort Max Proxy
 
-本地反向代理，部署在 Claude Code CLI 与 AWS Bedrock 之间，用于弥补 Claude Code 在 Bedrock 场景下的几个已知不足。
+本地反向代理，部署在 Claude Code CLI 与 AWS Bedrock 之间，用于弥补 Claude Code 在 Bedrock 场景下的已知不足。
 
-## 解决的问题
+> **CC v2.1.79 兼容性说明（2026-03-19）：** CC 主线程已原生支持 `effort: max` 和 1h prompt cache TTL，但 **subagent 请求仍存在多项配置传递缺陷**，proxy 对 subagent 仍是全方位有用的。详见下方"CC 原生能力 vs Proxy"对比表。
 
-### 1. Prompt Caching TTL 不可配置（主 CLI）
+## CC 原生能力 vs Proxy
 
-**问题：** Claude Code 主进程（Opus）会自动注入 prompt caching breakpoints，但 TTL 固定为 5m（默认值），无法配置为 1h。对于长时间开发会话，5 分钟后 cache 过期导致全量重新写入，浪费大量 input tokens 费用。
+基于 CC v2.1.79 + Bedrock 的实测结果（通过 proxy 日志验证）：
 
-**Proxy 行为：** 将所有已有 `cache_control` 的 TTL 从 5m 升级为 1h。
+| 功能 | CC 原生（主线程） | CC 原生（Subagent） | Proxy 补充 |
+|------|-------------------|---------------------|------------|
+| **Effort level** | `max` ✅ (`CLAUDE_CODE_EFFORT_LEVEL=max`) | 空 ❌ | 注入 `max` |
+| **Thinking mode** | `adaptive` ✅ | `budget_tokens: 8192` ❌ | 升级为 `adaptive` |
+| **1h Cache TTL** | `1h` ✅ (`ENABLE_PROMPT_CACHING_1H_BEDROCK=1`) | `5m` ❌ | 升级为 `1h` |
+| **1M context beta** | 已包含 ✅ | 缺失 ❌ | 注入 `context-1m-2025-08-07` |
+| **Model ID** | 正确 ✅ | 发送旧版 `claude-sonnet-4-5` ❌ | 映射为 `sonnet-4-6` |
+| **Cache breakpoints** | 自带 3 个 ✅ | 自带 2 个 ✅ | 补充注入（如不足 4 个） |
+| **SigV4 签名** | 需要 proxy | 需要 proxy | 统一处理 |
 
-**实际效果（来自日志）：**
-```
-# 5m TTL 过期后：61k tokens 全量重写 ≈ $1.14
-[#11] cache: read=0      write=61149  ← cache miss, 全量重写
+> **关键发现：** CC 的环境变量（`CLAUDE_CODE_EFFORT_LEVEL`、`ENABLE_PROMPT_CACHING_1H_BEDROCK`、`ANTHROPIC_DEFAULT_SONNET_MODEL`）只影响主线程，subagent 走内部硬编码路径。
+> 已提交 issue：[#36243](https://github.com/anthropics/claude-code/issues/36243)（cache TTL）、[#36249](https://github.com/anthropics/claude-code/issues/36249)（全部 5 项）
 
-# 升级 1h TTL 后：后续请求全部命中
-[#14] cache: read=61149   write=246   ← cache hit
-```
+## CC 原生配置（推荐同时启用）
 
-### 2. Agent SDK 完全缺失 Prompt Caching（Agent tool Subagent）
+在 `~/.claude/settings.json` 的 `env` 中添加：
 
-**问题：** Claude Code 有两种多 agent 机制，prompt caching 支持不同：
-
-| 机制 | 进程模型 | User-Agent | 自带 Prompt Caching |
-|------|----------|------------|---------------------|
-| **Agent tool** | 主进程内通过 `agent-sdk` 调用子进程 | `agent-sdk/0.1.76` | 无 |
-| **Agent Teams**（tmux 模式） | 独立终端窗口，各自运行完整 `claude` CLI | `cli` | 有（同主 CLI） |
-
-Agent tool 的 `agent-sdk`（截至 v0.1.76）**完全不注入** `cache_control` breakpoints，所有 subagent 请求的 tools 和 system prompt 每次都作为 uncached input 计费。Agent Teams 的 teammates 因为是独立 CLI 进程，自带 breakpoints，仅需 TTL 升级（见问题 1）。
-
-**Proxy 行为：** 对无 breakpoints 的请求（`pre=0`），自动在 tools、system prompt、最后一条 assistant message 上注入 `cache_control`（最多 4 个断点，遵守 API 限制）。
-
-**实际效果：**
-```
-# Agent tool subagent (agent-sdk)，proxy 注入后：
-[#1]  cache: 2bp(tools+system,1h,pre=0)  → cr=7013  cw=0     ← 命中缓存
-[#13] cache: 2bp(tools+system,1h,pre=0)  → cr=7013  cw=0     ← 持续命中
-
-# Agent Teams teammate (cli)，仅 TTL 升级：
-[#5]  cache: ttl-upgrade(4->1h,existing=4) → cr=60726 cw=95  ← 自带 caching
+```jsonc
+"CLAUDE_CODE_EFFORT_LEVEL": "max",            // CC 原生 max effort（Opus 4.6 only）
+"ENABLE_PROMPT_CACHING_1H_BEDROCK": "1"       // CC 原生 1h cache TTL（未文档化，仅主线程生效）
 ```
 
-### 3. Thinking 配置未针对最新模型优化
+这两个设置可减少 proxy 对主线程请求的修改量，但 **不影响 subagent**（仍需 proxy）。
 
-**问题：** Claude Code 对 Opus 4.6 / Sonnet 4.6 仍使用旧版 `budget_tokens` thinking 模式或未设置 `effort=max`，无法充分利用新模型的 adaptive thinking 能力。
+## Proxy 解决的问题
+
+### 1. Subagent 配置传递缺陷（核心价值）
+
+**问题：** CC 的 subagent（通过 Agent tool 调用的 Sonnet）不继承用户配置。5 项配置全部缺失：model ID、thinking mode、effort level、1M beta header、cache TTL。
+
+**Proxy 行为：** 统一拦截所有请求（主线程 + subagent），确保配置一致性。
+
+**实际效果（proxy 日志）：**
+```
+# 主线程（Opus）— CC 原生已正确，proxy 无需修改：
+[#38] model=opus-4-6-v1 | thinking: already adaptive+max | cache: 1bp(tools,1h,pre=3,native=3)
+
+# Subagent（Sonnet）— proxy 修复全部 5 项：
+[#40] model=sonnet-4-6 | thinking: thinking->adaptive (was budget_tokens:8192); effort->max (was ); beta+=context-1m | cache: 1bp(tools,1h,pre=2,upg=2)
+```
+
+### 2. Prompt Caching 注入与 TTL 升级
 
 **Proxy 行为：**
+- 对已有 breakpoints 但 TTL 为 5m 的请求：升级为 1h（`upg=N`）
+- 对无 breakpoints 的请求：注入最多 4 个断点 + 1h TTL
+- 对已经是 1h 的请求：跳过（`native=N`）
 
-| 模型 | 策略 |
+### 3. Thinking 配置优化
+
+| 模型 | Proxy 策略 |
 |------|------|
 | Opus 4.6 / Sonnet 4.6 | `thinking: adaptive` + `effort: max` + `context-1m` beta |
 | 旧模型（Sonnet 4.5 等） | `budget_tokens` 最大化至 `max_tokens - 1` |
@@ -56,15 +66,13 @@ Agent tool 的 `agent-sdk`（截至 v0.1.76）**完全不注入** `cache_control
 
 ### 4. 模型 ID 映射与版本锁定
 
-**问题：** Claude Code 使用 Anthropic API 格式的 model ID（如 `claude-sonnet-4-5`），但 Bedrock 需要跨区域推理 profile ID。此外，无法在不更新 CC 配置的情况下将旧版模型请求路由到新版。
-
-**Proxy 行为：** 自动映射，同时支持版本升级锁定：
+CC subagent 发送旧版 model ID，proxy 自动映射：
 
 ```
-claude-opus-4-6          → global.anthropic.claude-opus-4-6-v1
-claude-sonnet-4-5        → global.anthropic.claude-sonnet-4-6      ← 自动升级
+claude-opus-4-6            → global.anthropic.claude-opus-4-6-v1
+claude-sonnet-4-5          → global.anthropic.claude-sonnet-4-6      ← 自动升级
 claude-sonnet-4-5-20250929 → global.anthropic.claude-sonnet-4-6
-claude-haiku-4-5         → global.anthropic.claude-haiku-4-5-20251001-v1:0
+claude-haiku-4-5           → global.anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
 ## 架构
