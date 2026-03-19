@@ -30,7 +30,8 @@
     // 可选：性能调优
     // ============================================
     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",   // 最大输出 token
-    "CLAUDE_CODE_EFFORT_LEVEL": "high"           // proxy 会在请求层面升级到 max
+    "CLAUDE_CODE_EFFORT_LEVEL": "max",           // CC 原生支持 max（Opus 4.6 only）
+    "ENABLE_PROMPT_CACHING_1H_BEDROCK": "1"      // CC 原生 1h cache TTL（未文档化，仅主线程生效，subagent 仍需 proxy 升级）
   },
 
   // ============================================
